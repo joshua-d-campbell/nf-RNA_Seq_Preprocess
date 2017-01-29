@@ -1,4 +1,4 @@
-# nf-GATK_RNA_Variant_Preprocess-
+# nf-GATK_RNA_Variant_Preprocess
 
 ## 1. Description
 
