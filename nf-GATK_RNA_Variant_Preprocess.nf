@@ -4,7 +4,7 @@
 //############################################################################################################################
 //
 // Josh Campbell
-// 7/20/2016
+// 1/20/2017
 // Peforms alignment and preprocessing of paired-end RNA sequencing data specifically for variant calling.
 // This pipline may not be suitable for expression estimation as it marks duplicates
 // For all samples derived from the same individual, an indel co-cleaning step will be performed on all bams jointly
@@ -24,6 +24,7 @@ inputFileHeader = params.infile_header
 
 // Set up global variables for parameters with preset defaults:
 REF = file(params.ref_dir)
+REF_FASTA = file(params.ref_fasta)
 GATK = file(params.gatk_jar)
 PICARD = file(params.picard_jar)
 GOLD1 = file(params.gold_indels1)
@@ -31,19 +32,21 @@ GOLD2 = file(params.gold_indels2)
 OUTDIR = file(params.output_dir)
 DBSNP = file(params.dbsnp)
 OVERHANG = params.star_overhang
-ADAPTER = params.star_adapter
+ADAPTER = params.adapter
+GENE_GTF = file(params.gene_gtf)
 
 logParams(params, "nextflow_parameters.txt")
 
 VERSION = "1.0"
 
 // Header log info
+log.info ""
 log.info "========================================="
 log.info "GATK Best Practices for RNA-Seq Preprocessing v${VERSION}"
 log.info "Nextflow Version:	$workflow.nextflow.version"
 log.info "Command Line:		$workflow.commandLine"
 log.info "========================================="
-
+log.info ""
 
 
 //#############################################################################################################
@@ -61,8 +64,9 @@ log.info "========================================="
 //
 // ------------------------------------------------------------------------------------------------------------
 
-infile_params = readInputFile(inputFile, inputFileHeader)
-(readPairsFastQC, readPairsFastqToSTAR) = Channel.from(infile_params).into(2)
+Channel.from(inputFile)
+  .splitCsv(sep: '\t', header: inputFileHeader)
+  .into { readPairsFastQC; readPairsFastqToSTAR_1Pass; readPairsFastqToSTAR_2Pass }
 
 
 
@@ -73,20 +77,20 @@ infile_params = readInputFile(inputFile, inputFileHeader)
 //
 // ------------------------------------------------------------------------------------------------------------
 
-process runSTAR_1Pass {
+process runSTAR_1pass {
     tag "${indivID}|${sampleID}|${libraryID}|${rgID}"
     publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/Libraries/${libraryID}/${rgID}/STAR_1Pass/"
     
     input:
-    set indivID, sampleID, libraryID, rgID, platform_unit, platform, platform_model, run_date, center, fastqR1, fastqR2 from readPairsFastqToSTAR
+    set indivID, sampleID, libraryID, rgID, platform_unit, platform, platform_model, run_date, center, fastqR1, fastqR2 from readPairsFastqToSTAR_1Pass
     
     output:
-    set indivID, sampleID, libraryID, rgID, platform_unit, platform, platform_model, run_date, center, fastqR1, fastqR2, file(outfile_bam), file(outfile_metrics) into runSTAR_1PassOutput
-	
+    file(outfile_sj) into runSTAR_1PassOutput
+    
     script:
-    outfile_prefix = sampleID + "_" + libraryID + "_" + rgID + "."
-    outfile_bam = outfile_prefix + ".Aligned.out.bam"        
-    outfile_bam = outfile_prefix + ".out.tab"        
+    outfile_prefix = sampleID + "_" + libraryID + "_" + rgID + ".1pass."
+    outfile_bam = outfile_prefix + "Aligned.out.bam"        
+    outfile_sj = outfile_prefix + "SJ.out.tab"        
     
     """
     module load star/2.5.2b
@@ -95,28 +99,119 @@ process runSTAR_1Pass {
      --readFilesIn ${fastqR1} ${fastqR2}	\
      --runThreadN 12						\
      --outFileNamePrefix ${outfile_prefix}	\
+     --outSAMtype BAM Unsorted 				\
+     --clip3pAdapterSeq ${ADAPTER}			\
+     --sjdbGTFfile ${GENE_GTF}				\
+     --readFilesCommand zcat
+     
+    rm -vf ${outfile_bam}
+    """
+}
+
+
+process runSTAR_GenomeGenerate {
+    tag "Generating STAR genome reference with Splice Junctions"
+    
+    input:
+    val sjdb_files from runSTAR_1PassOutput.flatten().toList()
+    
+    output:
+	file('Genome') into runSTAR_GenomeGenerateOutput
+	
+    script:
+    
+    """
+    module load star/2.5.2b
+
+	STAR --runMode genomeGenerate					\
+      --genomeDir ./								\
+      --genomeFastaFiles ${REF_FASTA}				\
+      --sjdbFileChrStartEnd ${sjdb_files.join(' ')}	\
+      --sjdbOverhang ${OVERHANG}					\
+      --runThreadN 12							
+    """
+}
+
+
+process runSTAR_2pass {
+    tag "${indivID}|${sampleID}|${libraryID}|${rgID}"
+    publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/Libraries/${libraryID}/${rgID}/STAR_2Pass/"
+    
+    input:
+    set indivID, sampleID, libraryID, rgID, platform_unit, platform, platform_model, run_date, center, fastqR1, fastqR2 from readPairsFastqToSTAR_2Pass
+    set genomeFile from runSTAR_GenomeGenerateOutput.first()
+    
+    output:
+    set indivID, sampleID, libraryID, rgID, platform_unit, platform, platform_model, run_date, center, file(outfile_bam) into runSTAR_2PassOutput
+	
+    script:
+    outfile_prefix = sampleID + "_" + libraryID + "_" + rgID + ".2pass."
+    outfile_bam = outfile_prefix + "Aligned.out.bam"        
+    genomeDir = genomeFile.getParent()
+    
+    """
+    module load star/2.5.2b
+
+    STAR --genomeDir ${genomeDir}				\
+	  --readFilesIn ${fastqR1} ${fastqR2} 		\
+	  --runThreadN 12                           \
+      --outFileNamePrefix ${outfile_prefix}		\
+      --outSAMtype BAM Unsorted					\
+      --clip3pAdapterSeq ${ADAPTER}				\
+      --readFilesCommand zcat
     """
 }
 
 
 
+// ------------------------------------------------------------------------------------------------------------
+//
+// Add read group information and sort
+//
+// ------------------------------------------------------------------------------------------------------------
 
 
-STAR --runMode genomeGenerate					\
-     --genomeDir ${REF}					\
-     --genomeFastaFiles ${genomeFA}				\
-     --sjdbFileChrStartEnd $runDir/*SJ.out.tab	\
-     --sjdbOverhang ${OVERHANG}					\
-     --runThreadN $NSLOTS
+process runAddReadGroupInfo {
+    tag "${indivID}|${sampleID}|${libraryID}|${rgID}"
+    publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/Libraries/${libraryID}/${rgID}/STAR_2Pass/"
+    
+    input:
+    set indivID, sampleID, libraryID, rgID, platform_unit, platform, platform_model, run_date, center, bam from runSTAR_2PassOutput
+	
+	output:
+	set indivID, sampleID, file(outfile_bam) into runAddReadGroupInfoOutput
+	
+    script:
+    outfile_bam = sampleID + "_" + libraryID + "_" + rgID + ".rgid.bam"        
+    
+    """
+    module load java/1.8.0_66
+
+	java -Xmx5G -XX:ParallelGCThreads=1 -Djava.io.tmpdir=tmp/ -jar ${PICARD} AddOrReplaceReadGroups \
+		I=${bam}		 			\
+		O=${outfile_bam}	 		\
+		SO=coordinate 				\
+		RGID=${rgID}				\
+		RGLB=${libraryID}			\
+		RGPL=${platform}	 		\
+		RGPU=${platform_unit} 		\
+		RGSM=${sampleID}			\
+		RGDT=${run_date}			\
+		RGCN=${center}				\
+		RGPM=${platform_model}		
+    """
+}
      
-STAR --genomeDir $genomeDir 					\
-	 --readFilesIn ${fastqR1} ${fastqR2} 		\
-	 --runThreadN 12							\     
-     --outFileNamePrefix ${outfile_prefix}		\
-     --outSAMtype BAM SortedByCoordinate
 
 
 
+// ------------------------------------------------------------------------------------------------------------
+//
+// Combined libraries from the same Sample to send to MarkDuplicates
+//
+// ------------------------------------------------------------------------------------------------------------
+
+runAddReadGroupInfoOutput_grouped_by_sample = runAddReadGroupInfoOutput.groupTuple(by: [0,1])
 
 
 // ------------------------------------------------------------------------------------------------------------
@@ -132,11 +227,12 @@ process runMarkDuplicates {
 	publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/MarkDuplicates"
 	
     input:
-    set indivID, sampleID, aligned_bam_list from runBWAOutput_grouped_by_sample
+    set indivID, sampleID, aligned_bam_list from runAddReadGroupInfoOutput_grouped_by_sample
     
     output:
     set indivID, sampleID, file(outfile_bam) into runMarkDuplicatesOutput
-    set file(outfile_metrics) into runMarkDuplicatesOutput_QC
+    file(outfile_bam) into runMarkDuplicatesOutput_for_RSeQC
+    file(outfile_metrics) into runMarkDuplicatesOutput_for_MultiQC
     
     script:
     outfile_bam = sampleID + ".dedup.bam"
@@ -156,6 +252,41 @@ process runMarkDuplicates {
 
 
 
+// ------------------------------------------------------------------------------------------------------------
+//
+// Split reads aligning to introns into sepearate reads for downstream analysis
+//
+// ------------------------------------------------------------------------------------------------------------
+
+process runSplitNCigarReads {
+    tag "${indivID}|${sampleID}"
+	publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/SplitNCigarReads"
+	
+    input:
+    set indivID, sampleID, bam from runMarkDuplicatesOutput
+    
+    output:
+    set indivID, sampleID, file(outfile_bam) into runSplitNCigarReadsOutput
+    
+    script:
+    outfile_bam = sampleID + ".splitNreads.bam"
+	        
+    """
+    module load java/1.8.0_66
+	java -Xmx15g -Djava.io.tmpdir=tmp/ -jar ${GATK} \
+		-T SplitNCigarReads 			\
+		-R ${REF_FASTA}					\
+		-I ${bam} 						\
+		-o ${outfile_bam} 				\
+		-rf ReassignOneMappingQuality 	\
+		-RMQF 255 						\
+		-RMQT 60 						\
+		-U ALLOW_N_CIGAR_READS    
+	"""  
+}
+
+
+
 
 // ------------------------------------------------------------------------------------------------------------
 //
@@ -163,7 +294,7 @@ process runMarkDuplicates {
 //
 // ------------------------------------------------------------------------------------------------------------
 
-runMarkDuplicatesOutput_grouped_by_sample = runMarkDuplicatesOutput.groupTuple(by: [0])
+runSplitNCigarReadsOutput_grouped_by_sample = runSplitNCigarReadsOutput.groupTuple(by: [0])
 
 
 
@@ -180,7 +311,7 @@ process runRealignerTargetCreator {
     publishDir "${OUTDIR}/${indivID}/Processing/RealignerTargetCreator/"
     
     input:
-    set indivID, sampleID, dedup_bam_list from runMarkDuplicatesOutput_grouped_by_sample
+    set indivID, sampleID, dedup_bam_list from runSplitNCigarReadsOutput_grouped_by_sample
     
     output:
     set indivID, dedup_bam_list, file(target_file) into runRealignerTargetCreatorOutput
@@ -193,7 +324,7 @@ process runRealignerTargetCreator {
 
 	java -Xmx15g -Djava.io.tmpdir=tmp/ -jar ${GATK} \
 		-T RealignerTargetCreator \
-		-R ${REF} \
+		-R ${REF_FASTA} \
 		-I ${dedup_bam_list.join(" -I ")} \
 		-known ${GOLD1} \
 		-known ${GOLD2} \
@@ -218,7 +349,7 @@ process runIndelRealigner {
 
 	java -Xmx25g -Djava.io.tmpdir=tmp/ -jar ${GATK} \
 		-T IndelRealigner \
-		-R ${REF} \
+		-R ${REF_FASTA} \
 		-I ${dedup_bam_list.join(" -I ")} \
 		-targetIntervals ${target_file} \
 		-known ${GOLD1} \
@@ -260,7 +391,7 @@ process runBaseRecalibrator {
     
 	java -XX:ParallelGCThreads=2 -Xmx25g -Djava.io.tmpdir=tmp/ -jar ${GATK} \
 		-T BaseRecalibrator \
-		-R ${REF} \
+		-R ${REF_FASTA} \
 		-I ${realign_bam} \
 		-knownSites ${GOLD1} \
 		-knownSites ${GOLD2} \
@@ -277,7 +408,7 @@ process runPrintReads {
     set indivID, sampleID, realign_bam, recal_table from runBaseRecalibratorOutput 
 
     output:
-    set indivID, sampleID, file(outfile_bam), file(outfile_bai) into runPrintReadsOutput_for_DepthOfCoverage, runPrintReadsOutput_for_HC_Metrics, runPrintReadsOutput_for_Multiple_Metrics, runPrintReadsOutput_for_OxoG_Metrics
+    set indivID, sampleID, file(outfile_bam), file(outfile_bai) into runPrintReadsOutput
     set indivID, sampleID, realign_bam, recal_table into runPrintReadsOutput_for_PostRecal
             
     script:
@@ -289,7 +420,7 @@ process runPrintReads {
 
 	java -XX:ParallelGCThreads=1 -Xmx25g -Djava.io.tmpdir=tmp/ -jar ${GATK} \
 		-T PrintReads \
-		-R ${REF} \
+		-R ${REF_FASTA} \
 		-I ${realign_bam} \
 		-BQSR ${recal_table} \
 		-o ${outfile_bam}
@@ -314,7 +445,7 @@ process runBaseRecalibratorPostRecal {
     
 	java -XX:ParallelGCThreads=1 -Xmx5g -Djava.io.tmpdir=tmp/ -jar ${GATK} \
 		-T BaseRecalibrator \
-		-R ${REF} \
+		-R ${REF_FASTA} \
 		-I ${realign_bam} \
 		-knownSites ${GOLD1} \
 		-knownSites ${GOLD2} \
@@ -342,7 +473,7 @@ process runAnalyzeCovariates {
     
 	java -XX:ParallelGCThreads=1 -Xmx5g -Djava.io.tmpdir=tmp/ -jar ${GATK} \
 		-T AnalyzeCovariates \
-		-R ${REF} \
+		-R ${REF_FASTA} \
 		-before ${recal_table} \
 		-after ${post_recal_table} \
 		-plots ${recal_plots}
@@ -355,132 +486,11 @@ process runAnalyzeCovariates {
 
 // ------------------------------------------------------------------------------------------------------------
 //
-// Perform a several tasks to assess QC:
-// 1) Depth of coverage over targets
-// 2) Generate alignment stats, insert size stats, quality score distribution
-// 3) Generate hybrid capture stats
-// 4) Run FASTQC to assess read quality
+// Perform QC:
+// 1) Run FASTQC to assess read quality
+// 2) MultiQC on STAR 1st pass and 2nd pass output
 //
 // ------------------------------------------------------------------------------------------------------------
-
-process runDepthOfCoverage {
-    tag "${indivID}|${sampleID}"
-	publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/DepthOfCoverage"
-	    
-    input:
-    set indivID, sampleID, bam, bai from runPrintReadsOutput_for_DepthOfCoverage
-
-    output:
-    file("${prefix}*") into DepthOfCoverageOutput
-    
-    script:
-    prefix = sampleID + "."
-         
-    """
-    module load java/1.8.0_66
-
-	java -XX:ParallelGCThreads=1 -Djava.io.tmpdir=tmp/ -Xmx10g -jar ${GATK} \
-		-R ${REF} \
-		-T DepthOfCoverage \
-		-I ${bam} \
-		--omitDepthOutputAtEachBase \
-		-L ${TARGETS} \
-		-ct 10 -ct 20 -ct 50 -ct 100 \
-		-o ${sampleID}
-
-	"""
-}	
-
-
-
-process runCollectMultipleMetrics {
-    tag "${indivID}|${sampleID}"
- 	publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/Picard_Metrics"
- 	    
-    input:
-    set indivID, sampleID, bam, bai from runPrintReadsOutput_for_Multiple_Metrics
-
-    output:
-    file("${prefix}*") into CollectMultipleMetricsOutput mode flatten
-
-    script:       
-    prefix = sampleID + "."
-
-    """
-    module load java/1.8.0_66
-
-	java -XX:ParallelGCThreads=1 -Xmx5g -Djava.io.tmpdir=tmp/ -jar $PICARD CollectMultipleMetrics \
-		PROGRAM=MeanQualityByCycle \
-		PROGRAM=QualityScoreDistribution \
-		PROGRAM=CollectAlignmentSummaryMetrics \
-		PROGRAM=CollectInsertSizeMetrics\
-		PROGRAM=CollectGcBiasMetrics \
-		PROGRAM=CollectSequencingArtifactMetrics \
-		PROGRAM=CollectBaseDistributionByCycle \
-		PROGRAM=CollectQualityYieldMetrics \
-		INPUT=${bam} \
-		REFERENCE_SEQUENCE=${REF} \
-		DB_SNP=${DBSNP} \
-		INTERVALS=${BAITS} \
-		ASSUME_SORTED=true \
-		OUTPUT=${prefix} \
-		TMP_DIR=tmp
-	"""
-}	
-
-
-process runHybridCaptureMetrics {
-    tag "${indivID}|${sampleID}"
-	publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/Picard_Metrics"
-	    
-    input:
-    set indivID, sampleID, bam, bai from runPrintReadsOutput_for_HC_Metrics
-
-	output:
-	file(outfile) into HybridCaptureMetricsOutput mode flatten
-
-    script:       
-    outfile = sampleID + ".hybrid_selection_metrics.txt"
-    
-    """
-    module load java/1.8.0_66
-
-	java -XX:ParallelGCThreads=1 -Xmx10g -Djava.io.tmpdir=tmp/ -jar $PICARD CalculateHsMetrics \
-		INPUT=${bam} \
-		OUTPUT=${outfile} \
-		TARGET_INTERVALS=${TARGETS} \
-		BAIT_INTERVALS=${BAITS} \
-		REFERENCE_SEQUENCE=${REF} \
-		TMP_DIR=tmp
-	"""
-}	
-
-
-process runOxoGMetrics {
-    tag "${indivID}|${sampleID}"
-	publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/Picard_Metrics"
-	    
-    input:
-    set indivID, sampleID, bam, bai from runPrintReadsOutput_for_OxoG_Metrics
-
-	output:
-	file(outfile) into runOxoGMetricsOutput mode flatten
-
-    script:       
-    outfile = sampleID + ".OxoG_metrics.txt"
-    
-    """
-    module load java/1.8.0_66
-
-	java -XX:ParallelGCThreads=1 -Xmx10g -Djava.io.tmpdir=tmp/ -jar $PICARD CollectOxoGMetrics \
-		INPUT=${bam} \
-		OUTPUT=${outfile} \
-		DB_SNP=${DBSNP} \
-		INTERVALS=${BAITS} \
-		REFERENCE_SEQUENCE=${REF} \
-		TMP_DIR=tmp
-	"""
-}	
 
 
 
@@ -504,6 +514,7 @@ process runFastQC {
 
 
 
+
 // ------------------------------------------------------------------------------------------------------------
 //
 // Plot results with multiqc
@@ -515,10 +526,10 @@ process runMultiQCFastq {
 	publishDir "${OUTDIR}/Summary/Fastq"
 	    
     input:
-    file('*') from FastQCOutput.flatten().toList()
+    val fastqc_files from FastQCOutput.flatten().toList()
     
     output:
-    set file("fastq_multiqc*") into runMultiQCFastqOutput
+    file("fastq_multiqc*") into runMultiQCFastqOutput
     	
     script:
 
@@ -526,7 +537,7 @@ process runMultiQCFastq {
     module load python/2.7.12
     module load multiqc/0.9
 
-    multiqc -n fastq_multiqc *.zip *.html
+    multiqc -n fastq_multiqc ${fastqc_files.join(' ')}
     """
 }
 
@@ -537,48 +548,25 @@ process runMultiQCLibrary {
 	publishDir "${OUTDIR}/Summary/Library"
 	    
     input:
-    file('*') from runMarkDuplicatesOutput_QC.flatten().toList()
+    val duplicate_files from runMarkDuplicatesOutput_for_MultiQC.flatten().toList()
 
     output:
-    set file("library_multiqc*") into runMultiQCLibraryOutput
+    file("library_multiqc*") into runMultiQCLibraryOutput
     	
     script:
     """
     module load python/2.7.12
     module load multiqc/0.9
 
-    multiqc -n library_multiqc *.txt
+    multiqc -n library_multiqc ${duplicate_files.join(' ')}
     """
 }
-
-
-
-process runMultiQCSample {
-    tag "Generating sample level summary and QC plots"
-	publishDir "${OUTDIR}/Summary/Sample"
-	    
-    input:
-	file('*') from CollectMultipleMetricsOutput.flatten().toList()
-    file('*') from HybridCaptureMetricsOutput.flatten().toList()
-    file('*') from runOxoGMetricsOutput.flatten().toList()
-        
-    output:
-    set file("sample_multiqc*") into runMultiQCSampleOutput
-    	
-    script:
-    """
-    module load python/2.7.12
-    module load multiqc/0.9
-
-    multiqc -n sample_multiqc *.txt
-    """
-}
-
 
 
 
 
 workflow.onComplete {
+  log.info ""
   log.info "========================================="
   log.info "Duration:		$workflow.duration"
   log.info "========================================="
@@ -601,19 +589,6 @@ workflow.onComplete {
 // Read input file and save it into list of lists
 //
 // ------------------------------------------------------------------------------------------------------------
-def readInputFile(inputFile, is_header) { 
-  file_params = []
-  for( line in inputFile.readLines() ) {
-    if(is_header == true) {
-      header = line.split("\t").flatten()
-      is_header = false
-    } else {
-      file_params << line.split("\t").flatten()
-    }  
-}
-  return file_params
-}
-
 
 def logParams(p, n) {
   File file = new File(n)
