@@ -31,9 +31,20 @@ GOLD1 = file(params.gold_indels1)
 GOLD2 = file(params.gold_indels2)
 OUTDIR = file(params.output_dir)
 DBSNP = file(params.dbsnp)
-OVERHANG = params.star_overhang
+READ_LENGTH = params.read_length
 ADAPTER = params.adapter
 GENE_GTF = file(params.gene_gtf)
+GENE_BED = file(params.gene_bed)
+RSEM_REF = file(params.rsem_ref)
+OVERHANG = READ_LENGTH - 1
+STRANDED = params.stranded
+
+RSEM_FORWARD_PROB = 0.5
+if(STRANDED == true) {
+  RSEM_FORWARD_PROB = 0  
+} 
+
+
 
 logParams(params, "nextflow_parameters.txt")
 
@@ -101,19 +112,19 @@ process runSTAR_1pass {
      --outFileNamePrefix ${outfile_prefix}	\
      --outSAMtype BAM Unsorted 				\
      --clip3pAdapterSeq ${ADAPTER}			\
-     --sjdbGTFfile ${GENE_GTF}				\
+	 --outFilterMultimapNmax 20 			\
+	 --outFilterType BySJout				\
      --readFilesCommand zcat
      
     rm -vf ${outfile_bam}
     """
 }
 
-
 process runSTAR_GenomeGenerate {
     tag "Generating STAR genome reference with Splice Junctions"
     
     input:
-    val sjdb_files from runSTAR_1PassOutput.flatten().toList()
+    val sjdb_files from runSTAR_1PassOutput.flatten().toSortedList()
     
     output:
 	file('Genome') into runSTAR_GenomeGenerateOutput
@@ -127,11 +138,11 @@ process runSTAR_GenomeGenerate {
       --genomeDir ./								\
       --genomeFastaFiles ${REF_FASTA}				\
       --sjdbFileChrStartEnd ${sjdb_files.join(' ')}	\
+      --sjdbGTFfile ${GENE_GTF}						\
       --sjdbOverhang ${OVERHANG}					\
-      --runThreadN 12							
+      --runThreadN 12					
     """
 }
-
 
 process runSTAR_2pass {
     tag "${indivID}|${sampleID}|${libraryID}|${rgID}"
@@ -139,29 +150,64 @@ process runSTAR_2pass {
     
     input:
     set indivID, sampleID, libraryID, rgID, platform_unit, platform, platform_model, run_date, center, fastqR1, fastqR2 from readPairsFastqToSTAR_2Pass
-    set genomeFile from runSTAR_GenomeGenerateOutput.first()
+    val genomeFile from runSTAR_GenomeGenerateOutput.first()
     
     output:
     set indivID, sampleID, libraryID, rgID, platform_unit, platform, platform_model, run_date, center, file(outfile_bam) into runSTAR_2PassOutput
+	set indivID, sampleID, file(outfile_tbam) into runSTAR_2PassOutput_For_RSEM
 	
     script:
     outfile_prefix = sampleID + "_" + libraryID + "_" + rgID + ".2pass."
     outfile_bam = outfile_prefix + "Aligned.out.bam"        
+    outfile_tbam = outfile_prefix + "Aligned.toTranscriptome.out.bam"
     genomeDir = genomeFile.getParent()
     
     """
     module load star/2.5.2b
 
-    STAR --genomeDir ${genomeDir}				\
-	  --readFilesIn ${fastqR1} ${fastqR2} 		\
-	  --runThreadN 12                           \
-      --outFileNamePrefix ${outfile_prefix}		\
-      --outSAMtype BAM Unsorted					\
-      --clip3pAdapterSeq ${ADAPTER}				\
-      --readFilesCommand zcat
+    STAR --genomeDir ${genomeDir}					\
+	  --readFilesIn ${fastqR1} ${fastqR2} 			\
+	  --runThreadN 12                           	\
+      --outFileNamePrefix ${outfile_prefix}			\
+      --outSAMtype BAM Unsorted						\
+	  --quantMode TranscriptomeSAM					\
+	  --outFilterMultimapNmax 20 					\
+	  --outFilterType BySJout						\
+	  --outSAMunmapped Within						\
+      --readFilesCommand zcat      
     """
 }
 
+
+process runRSEM {
+    tag "${indivID}|${sampleID}"
+    publishDir "${OUTDIR}/${indivID}/${sampleID}/RSEM"
+    
+    input:
+	set indivID, sampleID, tbam from runSTAR_2PassOutput_For_RSEM
+    
+    output:
+    file outfile_plot into runRSEMOutput
+    
+    script:
+    outfile_plot_prefix = sampleID + "_RSEM"
+    outfile_plot = sampleID + "_RSEM.pdf"
+    
+    """
+    module load rsem/1.3.0
+
+	rsem-calculate-expression 						\
+    --calc-ci --estimate-rspd --no-bam-output --bam \
+	--paired-end 									\
+	--forward-prob ${RSEM_FORWARD_PROB}				\
+	-p 12											\
+	$tbam 											\
+	${RSEM_REF}					 					\
+	${sampleID}
+
+	rsem-plot-model ${sampleID} ${outfile_plot}
+	"""
+}
 
 
 // ------------------------------------------------------------------------------------------------------------
@@ -179,7 +225,7 @@ process runAddReadGroupInfo {
     set indivID, sampleID, libraryID, rgID, platform_unit, platform, platform_model, run_date, center, bam from runSTAR_2PassOutput
 	
 	output:
-	set indivID, sampleID, file(outfile_bam) into runAddReadGroupInfoOutput
+	set indivID, sampleID, file(outfile_bam) into runAddReadGroupInfoOutput, runAddReadGroupInfoOutput_For_RSeQC
 	
     script:
     outfile_bam = sampleID + "_" + libraryID + "_" + rgID + ".rgid.bam"        
@@ -198,7 +244,10 @@ process runAddReadGroupInfo {
 		RGSM=${sampleID}			\
 		RGDT=${run_date}			\
 		RGCN=${center}				\
-		RGPM=${platform_model}		
+		RGPM=${platform_model}		\
+		CREATE_INDEX=true	
+	
+    samtools index ${outfile_bam}			
     """
 }
      
@@ -371,7 +420,7 @@ process runIndelRealigner {
 // ------------------------------------------------------------------------------------------------------------
 
 // First we need to recapture the SampleID from the filename
-runIndelRealignerOutput_split = runIndelRealignerOutput.map { indivID, file -> tuple(indivID, file.baseName.replaceAll(".dedup.realign", ""), file) }
+runIndelRealignerOutput_split = runIndelRealignerOutput.map { indivID, file -> tuple(indivID, file.baseName.replaceAll(".splitNreads.realign", ""), file) }
 
 process runBaseRecalibrator {
     tag "${indivID}|${sampleID}"
@@ -486,6 +535,98 @@ process runAnalyzeCovariates {
 
 // ------------------------------------------------------------------------------------------------------------
 //
+// Call Variants for each sample separately
+// 1) Run HaplotypeCaller
+// 2) Filter variants
+// 3) Combine into single VCF file
+//
+// ------------------------------------------------------------------------------------------------------------
+
+process runHTC {
+    tag "${indivID}|${sampleID}"
+	publishDir "${OUTDIR}/${indivID}/${sampleID}/"
+	    
+    input:
+    set indivID, sampleID, bam, bai from runPrintReadsOutput
+
+	output:
+	set indivID, sampleID, file(outfile) into runHTC_Output
+	    
+    script:
+    outfile = sampleID + ".raw.vcf" 
+
+    """
+    module load java/1.8.0_66
+    
+	java -XX:ParallelGCThreads=1 -Xmx5g -Djava.io.tmpdir=tmp/ -jar ${GATK} \
+		-T HaplotypeCaller 			\
+		-R ${REF_FASTA} 			\
+		-I ${bam} 					\
+		-dontUseSoftClippedBases 	\
+		-stand_call_conf 20.0 		\
+		--dbsnp ${DBSNP} 			\
+		-L ${GENE_BED}				\
+		-o ${outfile}
+    """
+}    
+
+process runFilterVariants {
+    tag "${indivID}|${sampleID}"
+	publishDir "${OUTDIR}/${indivID}/${sampleID}/"
+	    
+    input:
+	set indivID, sampleID, vcf from runHTC_Output
+
+	output:
+	set file(outfile) into runFilterVariantsOutput
+	    
+    script:
+    outfile = sampleID + ".filter.vcf" 
+
+    """
+    module load java/1.8.0_66
+    
+	java -XX:ParallelGCThreads=1 -Xmx5g -Djava.io.tmpdir=tmp/ -jar ${GATK} \
+		-T VariantFiltration				\
+		-R ${REF_FASTA} 					\
+		-V ${vcf} 							\
+		-window 35 -cluster 3 				\
+		-filterName FS -filter "FS > 30.0" 	\
+		-filterName QD -filter "QD < 2.0"	\
+		-o ${outfile}
+    """
+}    
+
+process runCombineVariants {
+    tag "Combining VCFs"
+	publishDir "${OUTDIR}/Summary/VCF"
+	    
+    input:
+	val vcf from runFilterVariantsOutput.flatten().toSortedList()
+
+	output:
+	set file(outfile) into runCombineVariantsOutput
+	    
+    script:
+    outfile = "combined_variants.filter.vcf" 
+
+    """
+    module load java/1.8.0_66
+    
+	java -XX:ParallelGCThreads=1 -Xmx5g -Djava.io.tmpdir=tmp/ -jar ${GATK} \
+		-T CombineVariants		\
+		-R ${REF_FASTA} 		\
+		-V ${vcf.join(" -V ")} 	\
+		-o ${outfile}
+    """
+}    
+
+
+
+
+
+// ------------------------------------------------------------------------------------------------------------
+//
 // Perform QC:
 // 1) Run FASTQC to assess read quality
 // 2) MultiQC on STAR 1st pass and 2nd pass output
@@ -513,6 +654,45 @@ process runFastQC {
 }
 
 
+process runRSeQC {
+    tag "${indivID}|${sampleID}"
+
+    publishDir "${OUTDIR}/${indivID}/${sampleID}/RSeQC/"
+
+    input:
+    set indivID, sampleID, bam from runAddReadGroupInfoOutput_For_RSeQC
+
+    output:
+    file("${sampleID}*") into rseqc_results
+    
+    script:
+    outfile1 = sampleID + ".bam_stats.txt"
+    outfile2 = sampleID + ".inferred_experiment.txt"
+    outfile3 = sampleID + ".read_distribution.txt"
+    outfile4 = sampleID + ".tin.txt"
+	outfile5 = sampleID + ".junction_annotation.txt"
+	
+    """
+    module load python/2.7.12
+    module load rseqc/2.6.4
+    
+    bam_stat.py -i ${bam} > ${outfile1}
+    geneBody_coverage.py -i ${bam} -r ${GENE_BED} -o ${sampleID}
+    junction_annotation.py -i ${bam} -r ${GENE_BED} -o ${sampleID} 2> ${outfile5}
+    junction_saturation.py -i ${bam} -r ${GENE_BED} -o ${sampleID} 
+    tin.py -i ${bam} -r ${GENE_BED} > ${outfile4}
+    inner_distance.py -i ${bam} -r ${GENE_BED} -o ${sampleID} 
+    clipping_profile.py -i ${bam} -s "PE" -o ${sampleID}
+    infer_experiment.py -i ${bam} -r ${GENE_BED} > ${outfile2}
+    insertion_profile.py -s "PE" -i ${bam} -o ${sampleID} 
+    deletion_profile.py -i ${bam} -l ${READ_LENGTH} -o ${sampleID}
+    read_distribution.py -i ${bam} -r ${GENE_BED} > ${outfile3}    
+    read_GC.py -i ${bam} -o ${sampleID}
+    read_duplication.py -i ${bam} -o ${sampleID}
+	read_NVC.py -i ${bam} -o ${sampleID}
+	read_quality.py -i ${bam} -o ${sampleID}
+    """
+}
 
 
 // ------------------------------------------------------------------------------------------------------------
@@ -526,7 +706,7 @@ process runMultiQCFastq {
 	publishDir "${OUTDIR}/Summary/Fastq"
 	    
     input:
-    val fastqc_files from FastQCOutput.flatten().toList()
+    val fastqc_files from FastQCOutput.flatten().toSortedList()
     
     output:
     file("fastq_multiqc*") into runMultiQCFastqOutput
@@ -548,7 +728,7 @@ process runMultiQCLibrary {
 	publishDir "${OUTDIR}/Summary/Library"
 	    
     input:
-    val duplicate_files from runMarkDuplicatesOutput_for_MultiQC.flatten().toList()
+    val duplicate_files from runMarkDuplicatesOutput_for_MultiQC.flatten().toSortedList()
 
     output:
     file("library_multiqc*") into runMultiQCLibraryOutput
@@ -562,6 +742,25 @@ process runMultiQCLibrary {
     """
 }
 
+
+process runMultiQCSample {
+    tag "Generating sample level summary and QC plots"
+	publishDir "${OUTDIR}/Summary/Sample"
+	    
+    input:
+    val rseqc_files from rseqc_results.flatten().toSortedList()
+
+    output:
+    file("sample_multiqc*") into runMultiQCSampleOutput
+    	
+    script:
+    """
+    module load python/2.7.12
+    module load multiqc/0.9
+
+    multiqc -n sample_multiqc ${rseqc_files.join(' ')}
+    """
+}
 
 
 
