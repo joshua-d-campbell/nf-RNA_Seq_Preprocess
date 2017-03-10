@@ -38,6 +38,8 @@ GENE_BED = file(params.gene_bed)
 RSEM_REF = file(params.rsem_ref)
 OVERHANG = READ_LENGTH - 1
 STRANDED = params.stranded
+PREFIX = params.prefix
+CREATE_SE = params.create_SE_rscript
 
 RSEM_FORWARD_PROB = 0.5
 if(STRANDED == true) {
@@ -599,7 +601,7 @@ process runFilterVariants {
 
 process runCombineVariants {
     tag "Combining VCFs"
-	publishDir "${OUTDIR}/Summary/VCF"
+	publishDir "${OUTDIR}/Summary/Variants"
 	    
     input:
 	val vcf from runFilterVariantsOutput.flatten().toSortedList()
@@ -608,7 +610,7 @@ process runCombineVariants {
 	set file(outfile) into runCombineVariantsOutput
 	    
     script:
-    outfile = "combined_variants.filter.vcf" 
+    outfile = PREFIX + ".filter.vcf" 
 
     """
     module load java/1.8.0_66
@@ -762,6 +764,33 @@ process runMultiQCSample {
     """
 }
 
+
+
+// ------------------------------------------------------------------------------------------------------------
+//
+// Combine results into SummarizedExperiment object
+//
+// ------------------------------------------------------------------------------------------------------------
+process runCreateSE {
+    tag "Combining results into SummarizedExperiment object"
+	publishDir "${OUTDIR}/Summary/Expression"
+	    
+    input:
+    val rseqc_files from rseqc_results.flatten().toSortedList()
+
+    output:
+    set gene_file, iso_files into runCreateSEOutput
+    	
+    script:
+    gene_file = PREFIX + "_Gene_Expression.rds"
+    iso_file = PREFIX + "_Isoform_Expression.rds"
+    
+    """
+	module load R/3.3.2
+	
+    ${CREATE_SE} -a $genesresultsfile -b $isoformsresultsfile -c $demographicsfile -d $inputfile -e $fastqfile -f $picardmarkedduplicatesfile -g $rseqcbamstatfile -z $multiqcgeneralstatsfile -i $multiqcinferexpfile -x $rseqcjunctionannfile -k $rseqcreaddistfile -n $gtffile 
+    """
+}
 
 
 workflow.onComplete {
