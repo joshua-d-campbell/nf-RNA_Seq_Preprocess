@@ -9,7 +9,7 @@ suppressPackageStartupMessages(library("biomaRt"))
 option_list <- list(
   make_option(c("-a", "--genesresultsfile"), type="character", help="genesresultsfile"),
   make_option(c("-b", "--isoformsresultsfile"), type="character", help="isoformfile"),
-  make_option(c("-c", "--demographicfile"), type="character", help="demographicsfile"),
+  make_option(c("-c", "--demographicfile"), type="character", default = NA, help="demographicsfile"),
   make_option(c("-d", "--inputfile"), type="character", help="inputfile"),
   make_option(c("-e", "--fastqfile"), type="character", help="fastqfile"),
   make_option(c("-f", "--picardmarkeddupfile"), type="character", help="picardmarkeddupfile"),
@@ -25,7 +25,9 @@ opt <- parse_args(OptionParser(option_list=option_list))
 genefile <- opt$genesresultsfile
 trfile <- opt$isoformsresultsfile
 
-pfile1 <- opt$demographicfile
+if (!is.na(opt$demographicfile)){
+  pfile1 <- opt$demographicfile
+}
 pfile2 <- opt$inputfile
 pfile3 <- opt$fastqfile
 pfile4 <- opt$picardmarkeddupfile
@@ -39,13 +41,15 @@ pfile10<- opt$gtffile
 
 ##Reading in Phenotype Data Files
 
-#Demographics
-file1 = read.table(pfile1, header=TRUE, stringsAsFactors=FALSE, quote="",row.names = 1)
-phenofile = as.data.frame(t(file1))
-
 #Input file
 file2 =  read.table(pfile2, header=TRUE, stringsAsFactors=FALSE, quote="",row.names = "SAMPLE_ID")
-phenofile = cbind(phenofile,file2)
+phenofile = file2
+
+#Demographics
+if (!is.na(opt$demographicfile)){
+  file1 = read.table(pfile1, header=TRUE, stringsAsFactors=FALSE, quote="",row.names = 1)
+  phenofile = cbind(phenofile,t(file1))
+}
 
 #FASTQ
 file3 = read.table(pfile3, header=TRUE,sep = "\t", stringsAsFactors=FALSE, quote="",row.names = 1)
