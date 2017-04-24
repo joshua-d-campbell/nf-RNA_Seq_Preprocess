@@ -21,6 +21,7 @@
 // Set up global variables for requried parameters:
 inputFile = file(params.infile)
 inputFileHeader = params.infile_header
+demoFile = file(params.demofile)
 
 // Set up global variables for parameters with preset defaults:
 REF = file(params.ref_dir)
@@ -32,14 +33,14 @@ GOLD2 = file(params.gold_indels2)
 OUTDIR = file(params.output_dir)
 DBSNP = file(params.dbsnp)
 READ_LENGTH = params.read_length
-ADAPTER = params.adapter
 GENE_GTF = file(params.gene_gtf)
 GENE_BED = file(params.gene_bed)
 RSEM_REF = file(params.rsem_ref)
 OVERHANG = READ_LENGTH - 1
 STRANDED = params.stranded
 PREFIX = params.prefix
-CREATE_SE = params.create_SE_rscript
+CREATE_SE = params.create_SE_Rscript
+inferAncestry = params.inferAncestry
 
 RSEM_FORWARD_PROB = 0.5
 if(STRANDED == true) {
@@ -108,14 +109,13 @@ process runSTAR_1pass {
     """
     module load star/2.5.2b
     
-	STAR --genomeDir ${REF}					\
+     STAR --genomeDir ${REF}					\
      --readFilesIn ${fastqR1} ${fastqR2}	\
      --runThreadN 12						\
      --outFileNamePrefix ${outfile_prefix}	\
-     --outSAMtype BAM Unsorted 				\
-     --clip3pAdapterSeq ${ADAPTER}			\
-	 --outFilterMultimapNmax 20 			\
-	 --outFilterType BySJout				\
+     --outSAMtype BAM Unsorted			\
+     --outFilterMultimapNmax 20 			\
+     --outFilterType BySJout				\
      --readFilesCommand zcat
      
     rm -vf ${outfile_bam}
@@ -124,59 +124,62 @@ process runSTAR_1pass {
 
 process runSTAR_GenomeGenerate {
     tag "Generating STAR genome reference with Splice Junctions"
-    
+    publishDir "${OUTDIR}/Output/STAR_Genome"
+
     input:
     val sjdb_files from runSTAR_1PassOutput.flatten().toSortedList()
-    
+
     output:
-	file('Genome') into runSTAR_GenomeGenerateOutput
-	
+        set file('Genome'), file('SA'), file('SAindex'), file("*.txt"), file("*.out"), file("*.tab") into runSTAR_GenomeGenerateOutput
+
     script:
-    
     """
     module load star/2.5.2b
 
-	STAR --runMode genomeGenerate					\
-      --genomeDir ./								\
-      --genomeFastaFiles ${REF_FASTA}				\
-      --sjdbFileChrStartEnd ${sjdb_files.join(' ')}	\
-      --sjdbGTFfile ${GENE_GTF}						\
-      --sjdbOverhang ${OVERHANG}					\
-      --runThreadN 12					
+        STAR --runMode genomeGenerate                                   \
+      --genomeDir ./                                                            \
+      --genomeFastaFiles ${REF_FASTA}                           \
+      --sjdbFileChrStartEnd ${sjdb_files.join(' ')}     \
+      --sjdbGTFfile ${GENE_GTF}                                         \
+      --sjdbOverhang ${OVERHANG}                                        \
+      --runThreadN 12                                              \
+      --limitSjdbInsertNsj 5000000
     """
 }
+
 
 process runSTAR_2pass {
     tag "${indivID}|${sampleID}|${libraryID}|${rgID}"
     publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/Libraries/${libraryID}/${rgID}/STAR_2Pass/"
-    
+
     input:
     set indivID, sampleID, libraryID, rgID, platform_unit, platform, platform_model, run_date, center, fastqR1, fastqR2 from readPairsFastqToSTAR_2Pass
-    val genomeFile from runSTAR_GenomeGenerateOutput.first()
-    
+    set genomeFile, other_files from runSTAR_GenomeGenerateOutput.first()
+
     output:
     set indivID, sampleID, libraryID, rgID, platform_unit, platform, platform_model, run_date, center, file(outfile_bam) into runSTAR_2PassOutput
-	set indivID, sampleID, file(outfile_tbam) into runSTAR_2PassOutput_For_RSEM
-	
+    set indivID, sampleID, file(outfile_tbam) into runSTAR_2PassOutput_For_RSEM
+    val file("*.Log.final.out") into runSTARMultiQCOutput
+
     script:
     outfile_prefix = sampleID + "_" + libraryID + "_" + rgID + ".2pass."
-    outfile_bam = outfile_prefix + "Aligned.out.bam"        
+    outfile_bam = outfile_prefix + "Aligned.sortedByCoord.out.bam"
     outfile_tbam = outfile_prefix + "Aligned.toTranscriptome.out.bam"
     genomeDir = genomeFile.getParent()
-    
+
     """
     module load star/2.5.2b
 
-    STAR --genomeDir ${genomeDir}					\
-	  --readFilesIn ${fastqR1} ${fastqR2} 			\
-	  --runThreadN 12                           	\
-      --outFileNamePrefix ${outfile_prefix}			\
-      --outSAMtype BAM Unsorted						\
-	  --quantMode TranscriptomeSAM					\
-	  --outFilterMultimapNmax 20 					\
-	  --outFilterType BySJout						\
-	  --outSAMunmapped Within						\
-      --readFilesCommand zcat      
+    STAR --genomeDir ${genomeDir}                                       \
+          --readFilesIn ${fastqR1} ${fastqR2}                   \
+          --runThreadN 12                               \
+      --outFileNamePrefix ${outfile_prefix}                     \
+      --outSAMtype BAM SortedByCoordinate                                   \
+          --quantMode TranscriptomeSAM                                  \
+          --outFilterMultimapNmax 20                                    \
+          --outFilterType BySJout                                               \
+          --outSAMunmapped Within                                               \
+      --readFilesCommand zcat
     """
 }
 
@@ -225,7 +228,7 @@ process runRSEM {
 
 process runAddReadGroupInfo {
     tag "${indivID}|${sampleID}|${libraryID}|${rgID}"
-    publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/Libraries/${libraryID}/${rgID}/STAR_2Pass/"
+    publishDir "${OUTDIR}/${indivID}/${sampleID}"
     
     input:
     set indivID, sampleID, libraryID, rgID, platform_unit, platform, platform_model, run_date, center, bam from runSTAR_2PassOutput
@@ -234,11 +237,11 @@ process runAddReadGroupInfo {
 	set indivID, sampleID, file(outfile_bam) into runAddReadGroupInfoOutput, runAddReadGroupInfoOutput_For_RSeQC
 	
     script:
-    outfile_bam = sampleID + "_" + libraryID + "_" + rgID + ".rgid.bam"        
+    outfile_bam = sampleID + ".bam"        
     
     """
     module load java/1.8.0_66
-
+    module load samtools
 	java -Xmx5G -XX:ParallelGCThreads=1 -Djava.io.tmpdir=tmp/ -jar ${PICARD} AddOrReplaceReadGroups \
 		I=${bam}		 			\
 		O=${outfile_bam}	 		\
@@ -259,16 +262,6 @@ process runAddReadGroupInfo {
      
 
 
-
-// ------------------------------------------------------------------------------------------------------------
-//
-// Combined libraries from the same Sample to send to MarkDuplicates
-//
-// ------------------------------------------------------------------------------------------------------------
-
-runAddReadGroupInfoOutput_grouped_by_sample = runAddReadGroupInfoOutput.groupTuple(by: [0,1])
-
-
 // ------------------------------------------------------------------------------------------------------------
 //
 // Run Picard MarkDuplicates
@@ -282,22 +275,23 @@ process runMarkDuplicates {
 	publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/MarkDuplicates"
 	
     input:
-    set indivID, sampleID, aligned_bam_list from runAddReadGroupInfoOutput_grouped_by_sample
+    set indivID, sampleID, bam from runAddReadGroupInfoOutput
     
     output:
-    set indivID, sampleID, file(outfile_bam) into runMarkDuplicatesOutput
-    file(outfile_bam) into runMarkDuplicatesOutput_for_RSeQC
-    file (outfile_metrics) into runMarkDuplicatesOutput_for_MultiQC
+    set indivID, sampleID, file(outfile_bam), file(outfile_bai) into runMarkDuplicatesOutput
+    set file(outfile_bam), file(outfile_bai) into runMarkDuplicatesOutput_for_RSeQC
+    file(outfile_metrics) into runMarkDuplicatesOutput_for_MultiQC
 
     script:
     outfile_bam = sampleID + ".dedup.bam"
+    outfile_bai = sampleID + ".dedup.bai"
     outfile_metrics = sampleID + "_duplicate_metrics.txt"	
 	        
     """
     module load java/1.8.0_66
     
 	java -Xmx25G -XX:ParallelGCThreads=5 -Djava.io.tmpdir=tmp/ -jar ${PICARD} MarkDuplicates \
-		INPUT=${aligned_bam_list.join(" INPUT=")} \
+		INPUT=${bam} \
 		OUTPUT=${outfile_bam} \
 		METRICS_FILE=${outfile_metrics} \
 		CREATE_INDEX=true \
@@ -315,30 +309,32 @@ process runMarkDuplicates {
 
 process runSplitNCigarReads {
     tag "${indivID}|${sampleID}"
-	publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/SplitNCigarReads"
-	
+        publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/SplitNCigarReads"
+
     input:
-    set indivID, sampleID, bam from runMarkDuplicatesOutput
-    
+    set indivID, sampleID, bam, bai from runMarkDuplicatesOutput
+
     output:
-    set indivID, sampleID, file(outfile_bam) into runSplitNCigarReadsOutput
-    
+    set indivID, sampleID, file(outfile_bam), file(outfile_bai) into runSplitNCigarReadsOutput
+
     script:
     outfile_bam = sampleID + ".splitNreads.bam"
-	        
+        outfile_bai = sampleID + ".splitNreads.bai"
+
     """
     module load java/1.8.0_66
-	java -Xmx15g -Djava.io.tmpdir=tmp/ -jar ${GATK} \
-		-T SplitNCigarReads 			\
-		-R ${REF_FASTA}					\
-		-I ${bam} 						\
-		-o ${outfile_bam} 				\
-		-rf ReassignOneMappingQuality 	\
-		-RMQF 255 						\
-		-RMQT 60 						\
-		-U ALLOW_N_CIGAR_READS    
-	"""  
+        java -Xmx15g -XX:ParallelGCThreads=5 -Djava.io.tmpdir=tmp/ -jar ${GATK} \
+                -T SplitNCigarReads                     \
+                -R ${REF_FASTA}                                 \
+                -I ${bam}                                               \
+                -o ${outfile_bam}                               \
+                -rf ReassignOneMappingQuality   \
+                -RMQF 255                                               \
+                -RMQT 60                                                \
+                -U ALLOW_N_CIGAR_READS
+        """
 }
+
 
 
 
@@ -377,7 +373,7 @@ process runRealignerTargetCreator {
     """
     module load java/1.8.0_66
 
-	java -Xmx15g -Djava.io.tmpdir=tmp/ -jar ${GATK} \
+	java -Xmx15g -XX:ParallelGCThreads=5 -Djava.io.tmpdir=tmp/ -jar ${GATK} \
 		-T RealignerTargetCreator \
 		-R ${REF_FASTA} \
 		-I ${dedup_bam_list.join(" -I ")} \
@@ -396,13 +392,14 @@ process runIndelRealigner {
  	    
     output:
     set indivID, file('*.realign.bam') into runIndelRealignerOutput mode flatten
+    set indivID, file('*.bai') into runIndelRealignerOutputbai mode flatten
  
     script:
             
     """
     module load java/1.8.0_66
 
-	java -Xmx25g -Djava.io.tmpdir=tmp/ -jar ${GATK} \
+	java -Xmx25g -XX:ParallelGCThreads=5 -Djava.io.tmpdir=tmp/ -jar ${GATK} \
 		-T IndelRealigner \
 		-R ${REF_FASTA} \
 		-I ${dedup_bam_list.join(" -I ")} \
@@ -434,7 +431,6 @@ process runBaseRecalibrator {
 	    
     input:
     set indivID, sampleID, realign_bam from runIndelRealignerOutput_split
-    
     output:
     set indivID, sampleID, realign_bam, file(recal_table) into runBaseRecalibratorOutput
     
@@ -525,7 +521,8 @@ process runAnalyzeCovariates {
 
     """
     module load java/1.8.0_66
-    
+    module load R/3.3.2
+
 	java -XX:ParallelGCThreads=1 -Xmx5g -Djava.io.tmpdir=tmp/ -jar ${GATK} \
 		-T AnalyzeCovariates \
 		-R ${REF_FASTA} \
@@ -581,10 +578,10 @@ process runFilterVariants {
 	publishDir "${OUTDIR}/${indivID}/${sampleID}/"
 	    
     input:
-	set indivID, sampleID, vcf from runHTC_Output
+    set indivID, sampleID, vcf from runHTC_Output
 
-	output:
-	set file(outfile) into runFilterVariantsOutput
+    output:
+    file outfile into runFilterVariantsOutput
 	    
     script:
     outfile = sampleID + ".filter.vcf" 
@@ -605,13 +602,13 @@ process runFilterVariants {
 
 process runCombineVariants {
     tag "Combining VCFs"
-	publishDir "${OUTDIR}/Summary/Variants"
+    publishDir "${OUTDIR}/Output/Variants"
 	    
     input:
-	val vcf from runFilterVariantsOutput.flatten().toSortedList()
+    val vcf from runFilterVariantsOutput.flatten().toSortedList()
 
-	output:
-	set file(outfile) into runCombineVariantsOutput
+    output:
+    file outfile into runCombineVariantsforinferAncestry
 	    
     script:
     outfile = PREFIX + ".filter.vcf" 
@@ -626,9 +623,6 @@ process runCombineVariants {
 		-o ${outfile}
     """
 }    
-
-
-
 
 
 // ------------------------------------------------------------------------------------------------------------
@@ -668,12 +662,7 @@ process runRSeQC {
     input:
     set indivID, sampleID, bam from runAddReadGroupInfoOutput_For_RSeQC
 
-    output:
-    file("${sampleID}*.bam_stat.txt") into rseqc_bam_stat_results
-    file("${sampleID}*.inferred_experiment.txt") into rseqc_inferred_experiment_results
-    file("${sampleID}*.read_distribution.txt") into rseqc_read_distribution_results
-    file("${sampleID}*.tin.txt") into rseqc_tin_results
-    file("${sampleID}*.junction_annotation.txt") into rseqc_junction_annotation_results    
+    output: 
     file("${sampleID}*") into rseqc_results
 
     script:
@@ -706,6 +695,7 @@ process runRSeQC {
 }
 
 
+
 // ------------------------------------------------------------------------------------------------------------
 //
 // Plot results with multiqc
@@ -714,14 +704,14 @@ process runRSeQC {
 
 process runMultiQCFastq {
     tag "Generating fastq level summary and QC plots"
-	publishDir "${OUTDIR}/Summary/Fastq"
+	publishDir "${OUTDIR}/Output/QC/Fastq"
 	    
     input:
     val fastqc_files from FastQCOutput.flatten().toSortedList()
     
     output:
-    file("fastq_multiqc*") into runMultiQCFastqOutput
-    	
+    file("fastq_multiqc.html") into runMultiQCFastqOutput
+    file("fastq_multiqc_data/multiqc_fastqc.txt") into runMultiQCFastqOutputForSE
     script:
 
     """
@@ -736,13 +726,13 @@ process runMultiQCFastq {
 
 process runMultiQCLibrary {
     tag "Generating library level summary and QC plots"
-	publishDir "${OUTDIR}/Summary/Library"
+	publishDir "${OUTDIR}/Output/QC/Library"
 	    
     input:
     val duplicate_files from runMarkDuplicatesOutput_for_MultiQC.flatten().toSortedList()
 
     output:
-    file("library_multiqc*") into runMultiQCLibraryOutput
+    file("library_multiqc.html") into runMultiQCLibraryOutput
     file("library_multiqc_data/multiqc_picard_dups.txt") into runMultiQCPicardOutputForSE
     file("library_multiqc_data/multiqc_general_stats.txt") into runMultiQCGeneralStatsForSE
  	
@@ -759,20 +749,27 @@ process runMultiQCLibrary {
 
 process runMultiQCSample {
     tag "Generating sample level summary and QC plots"
-	publishDir "${OUTDIR}/Summary/Sample"
+	publishDir "${OUTDIR}/Output/QC/Sample"
 	    
     input:
     val rseqc_files from rseqc_results.flatten().toSortedList()
-
+    val star_files from runSTARMultiQCOutput.flatten().toSortedList()
+   
     output:
-    file("sample_multiqc*") into runMultiQCSampleOutput
-    	
+    file("sample_multiqc.html") into runMultiQCSampleOutput
+    file("sample_multiqc_data/multiqc_rseqc_bam_stat.txt") into rseqc_bam_stat_resultsforSE
+    file("sample_multiqc_data/multiqc_rseqc_infer_experiment.txt") into rseqc_inferred_experiment_resultsforSE
+    file("sample_multiqc_data/multiqc_rseqc_read_distribution.txt") into rseqc_read_distribution_resultsforSE
+    file("sample_multiqc_data/multiqc_rseqc_junction_annotation.txt") into rseqc_junction_annotation_resultsforSE	
     script:
     """
     module load python/2.7.12
     module load multiqc/0.9
+ 
+    echo -e "${rseqc_files.join('\n')}" > sample_multiqc_input_files.txt
+    echo -e "${star_files.join('\n')}" >> sample_multiqc_input_files.txt 
 
-    multiqc -n sample_multiqc ${rseqc_files.join(' ')}
+    multiqc -n sample_multiqc --file-list sample_multiqc_input_files.txt
     """
 }
 
@@ -784,21 +781,21 @@ process runMultiQCSample {
 // ------------------------------------------------------------------------------------------------------------
 process runCreateSE {
     tag "Combining results into SummarizedExperiment object"
-	publishDir "${OUTDIR}/Summary/Expression"
+	publishDir "${OUTDIR}/Output/Expression"
 	    
     input:
-    val rseqc_bam_stat_files from rseqc_bam_stat_results.flatten().toSortedList()
-    val fastqc_files from runMultiQCFastqOutput.flatten().toSortedList()
-    val rseqc_inferred_experiment_files from rseqc_inferred_experiment_results.flatten().toSortedList()
-    val rseqc_read_distribution_files from rseqc_read_distribution_results.flatten().toSortedList()
-    val rseqc_junction_annotation_files from rseqc_junction_annotation_results.flatten().toSortedList()
+    val rseqc_bam_stat_files from rseqc_bam_stat_resultsforSE.flatten().toSortedList()
+    val fastqc_files from runMultiQCFastqOutputForSE.flatten().toSortedList()
+    val rseqc_inferred_experiment_files from rseqc_inferred_experiment_resultsforSE.flatten().toSortedList()
+    val rseqc_read_distribution_files from rseqc_read_distribution_resultsforSE.flatten().toSortedList()
+    val rseqc_junction_annotation_files from rseqc_junction_annotation_resultsforSE.flatten().toSortedList()
     val mark_duplicates_files from runMultiQCPicardOutputForSE.flatten().toSortedList()
     val multiqc_files from runMultiQCGeneralStatsForSE.flatten().toSortedList()
     val genes_files from genesFileForSE.flatten().toSortedList()
     val isoforms_files from isoformsFileForSE.flatten().toSortedList()
-
+    
     output:
-    set gene_file, iso_files into runCreateSEOutput
+    set file(gene_file), file(iso_file) into runCreateSEOutput
     	
     script:
     gene_file = PREFIX + "_Gene_Expression.rds"
@@ -806,7 +803,7 @@ process runCreateSE {
     
     """
 	module load R/3.3.2
-	
+   	
     echo -e "${rseqc_bam_stat_files.join('\n')}" > rseqc_bam_stat.txt
     echo -e "${fastqc_files.join('\n')}" > fastqc_files.txt
     echo -e "${rseqc_inferred_experiment_files.join('\n')}" > rseqc_inferred_experiment.txt
@@ -816,8 +813,8 @@ process runCreateSE {
     echo -e "${multiqc_files.join('\n')}" > multiqc_files.txt
     echo -e "${genes_files.join('\n')}" > genes_results_files.txt
     echo -e "${isoforms_files.join('\n')}" > isoforms_results_files.txt
-
-    ${CREATE_SE} -a ${genes_results_files.txt} -b ${isoforms_results_files.txt} -c ${demo.txt} -d ${inputFile} -e ${fastqc_files.txt} -f ${mark_duplicates.txt} -g ${rseqc_bam_stat.txt} -z ${multiqc_files.txt} -i ${rseqc_inferred_experiment.txt} -x ${rseqc_junction_annotation.txt} -k ${rseqc_read_distribution.txt} -n ${GENE_GTF}
+    
+    ${CREATE_SE} -a genes_results_files.txt -b isoforms_results_files.txt -c ${demoFile} -d ${inputFile} -e fastqc_files.txt -f mark_duplicates.txt -g rseqc_bam_stat.txt -z multiqc_files.txt -i rseqc_inferred_experiment.txt -x rseqc_junction_annotation.txt -k rseqc_read_distribution.txt -n ${GENE_GTF} -o ${PREFIX}
     """
 }
 
@@ -832,7 +829,6 @@ workflow.onComplete {
 
 
 
-//#############################################################################################################
 //#############################################################################################################
 //
 // FUNCTIONS
