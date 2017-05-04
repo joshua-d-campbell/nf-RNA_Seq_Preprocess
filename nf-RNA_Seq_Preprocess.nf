@@ -159,12 +159,13 @@ process runSTAR_2pass {
     output:
     set indivID, sampleID, libraryID, rgID, platform_unit, platform, platform_model, run_date, center, file(outfile_bam) into runSTAR_2PassOutput
     set indivID, sampleID, file(outfile_tbam) into runSTAR_2PassOutput_For_RSEM
-    val file("*.Log.final.out") into runSTARMultiQCOutput
+    file(outfile_log) into runSTARMultiQCOutput
 
     script:
-    outfile_prefix = sampleID + "_" + libraryID + "_" + rgID + ".2pass."
+    outfile_prefix = sampleID
     outfile_bam = outfile_prefix + "Aligned.sortedByCoord.out.bam"
     outfile_tbam = outfile_prefix + "Aligned.toTranscriptome.out.bam"
+    outfile_log = outfile_prefix + "Log.final.out"
     genomeDir = genomeFile.getParent()
 
     """
@@ -234,11 +235,12 @@ process runAddReadGroupInfo {
     set indivID, sampleID, libraryID, rgID, platform_unit, platform, platform_model, run_date, center, bam from runSTAR_2PassOutput
 	
 	output:
-	set indivID, sampleID, file(outfile_bam) into runAddReadGroupInfoOutput, runAddReadGroupInfoOutput_For_RSeQC
+	set indivID, sampleID, file(outfile_bam),file(outfile_bai),file(outfile_bambai) into runAddReadGroupInfoOutput, runAddReadGroupInfoOutput_For_RSeQC
 	
     script:
     outfile_bam = sampleID + ".bam"        
-    
+    outfile_bai = sampleID + ".bai"
+    outfile_bambai = sampleID + ".bam.bai"
     """
     module load java/1.8.0_66
     module load samtools
@@ -453,7 +455,7 @@ process runBaseRecalibrator {
 
 process runPrintReads {
     tag "${indivID}|${sampleID}"
-	publishDir "${OUTDIR}/${indivID}/${sampleID}/"
+	publishDir "${OUTDIR}/${indivID}/${sampleID}/Processing/PrintReads"
 	    
     input:
     set indivID, sampleID, realign_bam, recal_table from runBaseRecalibratorOutput 
@@ -547,7 +549,7 @@ process runAnalyzeCovariates {
 
 process runHTC {
     tag "${indivID}|${sampleID}"
-	publishDir "${OUTDIR}/${indivID}/${sampleID}/"
+	publishDir "${OUTDIR}/${indivID}/${sampleID}/HTC"
 	    
     input:
     set indivID, sampleID, bam, bai from runPrintReadsOutput
@@ -575,7 +577,7 @@ process runHTC {
 
 process runFilterVariants {
     tag "${indivID}|${sampleID}"
-	publishDir "${OUTDIR}/${indivID}/${sampleID}/"
+	publishDir "${OUTDIR}/${indivID}/${sampleID}/HTC"
 	    
     input:
     set indivID, sampleID, vcf from runHTC_Output
@@ -624,6 +626,36 @@ process runCombineVariants {
     """
 }    
 
+//------------------------------------------------------------------------------------------------------------
+//
+// Using SNPRelate, infer ancestry based on SNPs. Outputs PDF of PC1 v PC2, text file of pc vals x sample
+//
+//------------------------------------------------------------------------------------------------------------
+
+
+process inferAncestry {
+    tag "inferringAncestry"
+    publishDir "${OUTDIR}/Output/ancestryPCA"
+
+
+input:
+   val vcfFile from runCombineVariantsforinferAncestry
+
+
+output:
+   file("*pca.txt") into inferFileForrunCreateSE
+   file("*pca.pdf") into inferAncestryOutput
+
+
+script:
+    outfile_prefix = PREFIX +"_ancestryInference"
+
+"""
+        module load R/3.2.3
+        Rscript ${inferAncestry} ${vcfFile} ${outfile_prefix}
+
+"""
+}
 
 // ------------------------------------------------------------------------------------------------------------
 //
@@ -664,12 +696,13 @@ process runRSeQC {
 
     output: 
     file("${sampleID}*") into rseqc_results
+    file("*.summary.txt") into rseqc_tin_forSE
 
     script:
     outfile1 = sampleID + ".bam_stat.txt"
     outfile2 = sampleID + ".inferred_experiment.txt"
     outfile3 = sampleID + ".read_distribution.txt"
-    outfile4 = sampleID + ".tin.txt"
+    outfile4 = sampleID + ".summary.txt"
     outfile5 = sampleID + ".junction_annotation.txt"
 	
     """
@@ -712,13 +745,15 @@ process runMultiQCFastq {
     output:
     file("fastq_multiqc.html") into runMultiQCFastqOutput
     file("fastq_multiqc_data/multiqc_fastqc.txt") into runMultiQCFastqOutputForSE
+    file("fastq_multiqc_input_files.txt") into runMultiQCFastqOutputFile
     script:
 
     """
     module load python/2.7.12
     module load multiqc/0.9
 
-    multiqc -n fastq_multiqc ${fastqc_files.join(' ')}
+    echo -e "${fastqc_files.join('\n')}" > fastq_multiqc_input_files.txt
+    multiqc -n fastq_multiqc --file-list fastq_multiqc_input_files.txt
     """
 }
 
@@ -735,14 +770,15 @@ process runMultiQCLibrary {
     file("library_multiqc.html") into runMultiQCLibraryOutput
     file("library_multiqc_data/multiqc_picard_dups.txt") into runMultiQCPicardOutputForSE
     file("library_multiqc_data/multiqc_general_stats.txt") into runMultiQCGeneralStatsForSE
- 	
+    file("library_multiqc_input_files.txt") into runMultiQCLibraryOutputFile
     script:
 
     """
     module load python/2.7.12
     module load multiqc/0.9
 
-    multiqc -n library_multiqc ${duplicate_files.join(' ')}
+    echo -e "${duplicate_files.join('\n')}" > library_multiqc_input_files.txt
+    multiqc -n library_multiqc --file-list library_multiqc_input_files.txt 
     """
 }
 
@@ -761,6 +797,8 @@ process runMultiQCSample {
     file("sample_multiqc_data/multiqc_rseqc_infer_experiment.txt") into rseqc_inferred_experiment_resultsforSE
     file("sample_multiqc_data/multiqc_rseqc_read_distribution.txt") into rseqc_read_distribution_resultsforSE
     file("sample_multiqc_data/multiqc_rseqc_junction_annotation.txt") into rseqc_junction_annotation_resultsforSE	
+    file("sample_multiqc_input_files.txt") into runMultiQCSampleOutputFile
+    file("sample_multiqc_data/multiqc_star.txt") into rseqc_star_resultsforSE
     script:
     """
     module load python/2.7.12
@@ -791,9 +829,11 @@ process runCreateSE {
     val rseqc_junction_annotation_files from rseqc_junction_annotation_resultsforSE.flatten().toSortedList()
     val mark_duplicates_files from runMultiQCPicardOutputForSE.flatten().toSortedList()
     val multiqc_files from runMultiQCGeneralStatsForSE.flatten().toSortedList()
+    val star_files from rseqc_star_resultsforSE.flatten().toSortedList()
+    val tin_files from rseqc_tin_forSE.flatten().toSortedList()
     val genes_files from genesFileForSE.flatten().toSortedList()
     val isoforms_files from isoformsFileForSE.flatten().toSortedList()
-    
+    val infer_files from inferFileForrunCreateSE.flatten().toSortedList()
     output:
     set file(gene_file), file(iso_file) into runCreateSEOutput
     	
@@ -811,10 +851,12 @@ process runCreateSE {
     echo -e "${rseqc_junction_annotation_files.join('\n')}" > rseqc_junction_annotation.txt
     echo -e "${mark_duplicates_files.join('\n')}" > mark_duplicates.txt
     echo -e "${multiqc_files.join('\n')}" > multiqc_files.txt
+    echo -e "${star_files.join('\n')}" > star_files.txt
+    echo -e "${tin_files.join('\n')}" > tin_files.txt
     echo -e "${genes_files.join('\n')}" > genes_results_files.txt
     echo -e "${isoforms_files.join('\n')}" > isoforms_results_files.txt
-    
-    ${CREATE_SE} -a genes_results_files.txt -b isoforms_results_files.txt -c ${demoFile} -d ${inputFile} -e fastqc_files.txt -f mark_duplicates.txt -g rseqc_bam_stat.txt -z multiqc_files.txt -i rseqc_inferred_experiment.txt -x rseqc_junction_annotation.txt -k rseqc_read_distribution.txt -n ${GENE_GTF} -o ${PREFIX}
+    echo -e "${infer_files.join('\n')}" > infer_files.txt
+    ${CREATE_SE} -a genes_results_files.txt -b isoforms_results_files.txt -c ${demoFile} -d ${inputFile} -e fastqc_files.txt -f mark_duplicates.txt -g rseqc_bam_stat.txt -z multiqc_files.txt -i rseqc_inferred_experiment.txt -x rseqc_junction_annotation.txt -k rseqc_read_distribution.txt -n ${GENE_GTF} -m infer_files.txt -o ${PREFIX} -v star_files.txt -w tin_files.txt
     """
 }
 
