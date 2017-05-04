@@ -1,16 +1,14 @@
 # nf-RNA_Seq_Preprocess
 
 ## 1. Description
-
-This pipeline will align and process RNA-seq data for variant calling based on the GATK best practices.
-
+This pipeline will preprocess RNA-seq data to quantify gene and isoform expression with STAR/RSEM and perform variant calling based on the GATK best practices.
 ```
-nextflow nf-RNA_Seq_Preprocess -c nextflow.config -with-trace
+nextflow nf-RNA_Seq_Preprocess -c nextflow.config -with-timeline -with-dag -with-trace
 ```
 
 If the pipeline fails at any point and you fix the issue, the pipeline can be restarted with job avoidance using the command:
 ```
-nextflow nf-RNA_Seq_Preprocess -c nextflow.config -with-trace -resume
+nextflow nf-RNA_Seq_Preprocess -c nextflow.config -with-timeline -with-dag -with-trace -resume
 ```
 
 For more information about Nextflow commands, please refer to the following link:
@@ -20,7 +18,7 @@ https://www.nextflow.io
 
 ## 2. Documentation of tools and approaches used for preprocessing
 #### Preprocessing:
-- Mapping: http://gatkforums.broadinstitute.org/gatk/discussion/6483/how-to-map-and-clean-up-short-read-sequence-data-efficiently
+- Processing for Variant Calling: https://software.broadinstitute.org/gatk/guide/article?id=3891
 - STAR: https://github.com/alexdobin/STAR
 - Marking Duplicates: http://gatkforums.broadinstitute.org/gatk/discussion/6747/how-to-mark-duplicates-with-markduplicates-or-markduplicateswithmatecigar
 - Realignment around indels: http://gatkforums.broadinstitute.org/gatk/discussion/2800/howto-perform-local-realignment-around-indels
@@ -65,6 +63,14 @@ params.rsem_ref = "Homo_sapiens.GRCh37.75.ucsc.base_random"
 params.create_SE_Rscript = "createSEfromRSEM.R"
 params.inferAncestry = "inferAncestry.R"
 ```
+#### Parameter description
+  - params.infile - file path to input file
+  - params.ouutput_dir - path to output directory
+  - params.prefix - prefix to 
+  - params.demofile - file path to demographics file
+  - params.read_length - 
+  - params.stranded - true will cause
+  - params.ref_fasta - 
 #### Input file description
 The input file needs to be tab delimited and contain 11 columns (Capitalized):
   1.  INDIVIDUAL_ID - The ID of the individual from which the sample was derived.
