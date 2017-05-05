@@ -46,27 +46,28 @@ http://gatkforums.broadinstitute.org/wdl/discussion/2798/howto-prepare-a-referen
 
 ## 4. Input Parameters
 ```
-params.gatk_jar = "/share/pkg/gatk/3.5/install/GenomeAnalysisTK.jar"
-params.picard_jar = "/share/pkg/picard/2.8.0/install/lib/picard.jar"
-params.ref_fasta = "hg19.fa"
-params.ref_dir = "STAR_reference_directory"
-params.gold_indels1 = "1000G_phase1.indels.hg19.sites.vcf"
-params.gold_indels2 = "Mills_and_1000G_gold_standard.indels.hg19.sites.vcf"
-params.dbsnp = "dbsnp_138.hg19.vcf"
+params.infile = "fastq_input.txt"
+params.output_dir = "output_directory"
+params.prefix = "prefix"
+params.demofile = "demographics.txt"
 
 params.read_length = 75
 params.stranded = true
+
+params.ref_fasta = "hg19.fa"
+params.ref_dir = "STAR_reference_directory"
+params.gatk_jar = "/share/pkg/gatk/3.5/install/GenomeAnalysisTK.jar"
+params.picard_jar = "/share/pkg/picard/2.8.0/install/lib/picard.jar"
+params.gold_indels1 = "1000G_phase1.indels.hg19.sites.vcf"
+params.gold_indels2 = "Mills_and_1000G_gold_standard.indels.hg19.sites.vcf"
+params.dbsnp = "dbsnp_138.hg19.vcf"
+params.infile_header = true
 params.gene_gtf = "Homo_sapiens.GRCh37.75.ucsc.base_random.gtf"
 params.gene_bed = "Homo_sapiens.GRCh37.75.ucsc.base_random.bed"
 params.rsem_ref = "Homo_sapiens.GRCh37.75.ucsc.base_random"
-
 params.create_SE_Rscript = "createSEfromRSEM.R"
 params.inferAncestry = "inferAncestry.R"
-params.output_dir = "output_directory"
-params.prefix = "prefix"
-params.infile = "fastq_input.txt"
-params.infile_header = true
-params.demofile = "demographics.txt"
+
 ```
 
 #### Input file description
