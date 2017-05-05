@@ -152,25 +152,21 @@ Due to the nature of the pipeline, there may not be enough storage space to run 
 
 In this example, there are two batches, Batch 1 and Batch2. To make MultiQC plots from the outputs of both of the batches, we will concatenate the file paths that were used in the batches, stored inside each of the "multiqc_input_files.txt".  
 ```
-#For Fastq MultiQC
 module load python/2.7.12
 module load multiqc/0.9
-echo -e "Batch1/Output/QC/Fastq/sample_multiqc_input_files.txt" >  all_multiqc_input_files.txt
-echo -e "Batch2/Output/QC/Fastq/sample_multiqc_input_files.txt" >>  all_multiqc_input_files.txt
+#For Fastq MultiQC
+echo -e "Batch1/Output/QC/Fastq/fastq_multiqc_input_files.txt" >  all_multiqc_input_files.txt
+echo -e "Batch2/Output/QC/Fastq/fastq_multiqc_input_files.txt" >>  all_multiqc_input_files.txt
 multiqc -n all_fastq_multiqc --file-list all_multiqc_input_files.txt
 ```
 ```
 #For library MultiQC
-module load python/2.7.12
-module load multiqc/0.9
-echo -e "Batch1/Output/QC/Library/sample_multiqc_input_files.txt" >  all_multiqc_input_files.txt
-echo -e "Batch2/Output/QC/Library/sample_multiqc_input_files.txt" >>  all_multiqc_input_files.txt
+echo -e "Batch1/Output/QC/Library/library_multiqc_input_files.txt" >  all_multiqc_input_files.txt
+echo -e "Batch2/Output/QC/Library/library_multiqc_input_files.txt" >>  all_multiqc_input_files.txt
 multiqc -n all_library_multiqc --file-list all_multiqc_input_files.txt
 ```
 ```
 #For sample MultiQC
-module load python/2.7.12
-module load multiqc/0.9
 echo -e "Batch1/Output/QC/Sample/sample_multiqc_input_files.txt" >  all_multiqc_input_files.txt
 echo -e "Batch2/Output/QC/Sample/sample_multiqc_input_files.txt" >>  all_multiqc_input_files.txt
 multiqc -n all_sample_multiqc --file-list all_multiqc_input_files.txt
