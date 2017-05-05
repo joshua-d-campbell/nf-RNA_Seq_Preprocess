@@ -284,6 +284,7 @@ process runMarkDuplicates {
     set file(outfile_bam), file(outfile_bai) into runMarkDuplicatesOutput_for_RSeQC
     file(outfile_metrics) into runMarkDuplicatesOutput_for_MultiQC
 
+
     script:
     outfile_bam = sampleID + ".dedup.bam"
     outfile_bai = sampleID + ".dedup.bai"
@@ -698,6 +699,7 @@ process runRSeQC {
     file("${sampleID}*") into rseqc_results
     file("*.summary.txt") into rseqc_tin_forSE
 
+
     script:
     outfile1 = sampleID + ".bam_stat.txt"
     outfile2 = sampleID + ".inferred_experiment.txt"
@@ -772,7 +774,7 @@ process runMultiQCLibrary {
     file("library_multiqc_data/multiqc_general_stats.txt") into runMultiQCGeneralStatsForSE
     file("library_multiqc_input_files.txt") into runMultiQCLibraryOutputFile
     script:
-
+    
     """
     module load python/2.7.12
     module load multiqc/0.9
@@ -834,6 +836,7 @@ process runCreateSE {
     val genes_files from genesFileForSE.flatten().toSortedList()
     val isoforms_files from isoformsFileForSE.flatten().toSortedList()
     val infer_files from inferFileForrunCreateSE.flatten().toSortedList()
+
     output:
     set file(gene_file), file(iso_file) into runCreateSEOutput
     	
@@ -857,6 +860,7 @@ process runCreateSE {
     echo -e "${isoforms_files.join('\n')}" > isoforms_results_files.txt
     echo -e "${infer_files.join('\n')}" > infer_files.txt
     ${CREATE_SE} -a genes_results_files.txt -b isoforms_results_files.txt -c ${demoFile} -d ${inputFile} -e fastqc_files.txt -f mark_duplicates.txt -g rseqc_bam_stat.txt -z multiqc_files.txt -i rseqc_inferred_experiment.txt -x rseqc_junction_annotation.txt -k rseqc_read_distribution.txt -n ${GENE_GTF} -m infer_files.txt -o ${PREFIX} -v star_files.txt -w tin_files.txt
+
     """
 }
 

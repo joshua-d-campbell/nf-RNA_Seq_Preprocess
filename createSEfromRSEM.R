@@ -56,6 +56,13 @@ file2 =  read.table(pfile2, header=TRUE, stringsAsFactors=FALSE, quote="",row.na
 colnames(file2) = removalOfChars(file2)
 phenofile = file2
 
+
+#Demographics
+if (!is.na(opt$demographicfile)){
+  file1 = read.table(pfile1, header=TRUE, stringsAsFactors=FALSE, quote="",row.names = 1)
+  phenofile = cbind(phenofile,t(file1))
+}
+
 #Demographics
 if (!is.na(opt$demographicfile)){
   demo = read.table(pfile1, header=TRUE, stringsAsFactors=FALSE, quote="",row.names = 1, sep = "\t")
