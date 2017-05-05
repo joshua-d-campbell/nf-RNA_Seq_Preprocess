@@ -155,21 +155,21 @@ In this example, there are two batches, Batch 1 and Batch2. To make MultiQC plot
 module load python/2.7.12
 module load multiqc/0.9
 #For Fastq MultiQC
-echo -e "Batch1/Output/QC/Fastq/fastq_multiqc_input_files.txt" >  all_multiqc_input_files.txt
-echo -e "Batch2/Output/QC/Fastq/fastq_multiqc_input_files.txt" >>  all_multiqc_input_files.txt
-multiqc -n all_fastq_multiqc --file-list all_multiqc_input_files.txt
+echo -e "Batch1/Output/QC/Fastq/fastq_multiqc_input_files.txt" >  all_fastq_multiqc_input_files.txt
+echo -e "Batch2/Output/QC/Fastq/fastq_multiqc_input_files.txt" >>  all_fastq_multiqc_input_files.txt
+multiqc -n all_fastq_multiqc --file-list all_fastq_multiqc_input_files.txt
 ```
 ```
 #For library MultiQC
-echo -e "Batch1/Output/QC/Library/library_multiqc_input_files.txt" >  all_multiqc_input_files.txt
-echo -e "Batch2/Output/QC/Library/library_multiqc_input_files.txt" >>  all_multiqc_input_files.txt
-multiqc -n all_library_multiqc --file-list all_multiqc_input_files.txt
+echo -e "Batch1/Output/QC/Library/library_multiqc_input_files.txt" >  all_library_multiqc_input_files.txt
+echo -e "Batch2/Output/QC/Library/library_multiqc_input_files.txt" >>  all_library_multiqc_input_files.txt
+multiqc -n all_library_multiqc --file-list all_library_multiqc_input_files.txt
 ```
 ```
 #For sample MultiQC
-echo -e "Batch1/Output/QC/Sample/sample_multiqc_input_files.txt" >  all_multiqc_input_files.txt
-echo -e "Batch2/Output/QC/Sample/sample_multiqc_input_files.txt" >>  all_multiqc_input_files.txt
-multiqc -n all_sample_multiqc --file-list all_multiqc_input_files.txt
+echo -e "Batch1/Output/QC/Sample/sample_multiqc_input_files.txt" >  all_sample_multiqc_input_files.txt
+echo -e "Batch2/Output/QC/Sample/sample_multiqc_input_files.txt" >>  all_sample_multiqc_input_files.txt
+multiqc -n all_sample_multiqc --file-list all_sample_multiqc_input_files.txt
 ```
 
 
