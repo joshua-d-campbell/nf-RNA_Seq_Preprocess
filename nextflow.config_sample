@@ -1,0 +1,65 @@
+
+// List of parameters that can be passed to this workflow
+
+
+params.infile = 
+params.output_dir = 
+params.prefix = 
+params.demofile = 
+
+params.read_length = 75
+params.stranded = true
+
+
+
+params.ref_fasta = "/restricted/projectnb/cbmhive/references/ucsc/hg19/base_random/hg19.fa"
+params.ref_dir = "/restricted/projectnb/cbmhive/references/STAR/ucsc/hg19/base_random/"
+params.gatk_jar = "/share/pkg/gatk/3.5/install/GenomeAnalysisTK.jar"
+params.picard_jar = "/share/pkg/picard/2.8.0/install/lib/picard.jar"
+params.gold_indels1 = "/restricted/projectnb/cbmhive/references/ucsc/hg19/base_random/1000G_phase1.indels.hg19.sites.vcf"
+params.gold_indels2 = "/restricted/projectnb/cbmhive/references/ucsc/hg19/base_random/Mills_and_1000G_gold_standard.indels.hg19.sites.vcf"
+params.dbsnp = "/restricted/projectnb/cbmhive/references/ucsc/hg19/base_random/dbsnp_138.hg19.vcf"
+params.infile_header = true
+params.gene_gtf = "/restricted/projectnb/cbmhive/references/RSEM/ucsc/hg19/Ensembl/Homo_sapiens.GRCh37.75/base_random/Homo_sapiens.GRCh37.75.ucsc.base_random.gtf"
+params.gene_bed = "/restricted/projectnb/cbmhive/references/RSEM/ucsc/hg19/Ensembl/Homo_sapiens.GRCh37.75/base_random/Homo_sapiens.GRCh37.75.ucsc.base_random.bed"
+params.rsem_ref = "/restricted/projectnb/cbmhive/references/RSEM/ucsc/hg19/Ensembl/Homo_sapiens.GRCh37.75/base_random/Homo_sapiens.GRCh37.75.ucsc.base_random"
+params.create_SE_Rscript = "/restricted/projectnb/decamp/Scripts/RNA/Alignment/Nextflow/createSEfromRSEM.R"
+params.inferAncestry = "/restricted/projectnb/decamp/Scripts/RNA/Alignment/Nextflow/inferAncestry.R"
+
+// Project used for SGE cluster
+PROJECT = 'decamp'
+
+process {
+  // Global cluster parameters
+  executor='sge'
+  scratch=true
+
+  // Specific cluster parameters for each process
+  $runSTAR_1pass.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=30G -pe omp 12"
+  $runSTAR_GenomeGenerate.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=30G -pe omp 12"
+  $runSTAR_2pass.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=30G -pe omp 12"
+  $runRSEM.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=5G -pe omp 12"
+  $runAddReadGroupInfo.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=5G"
+  $runMarkDuplicates.clusterOptions = "-P ${PROJECT} -l h_rt=48:00:00 -l mem_total=94G -pe omp 5"
+  $runSplitNCigarReads.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=5G -pe omp 5"
+  $runRealignerTargetCreator.clusterOptions = "-P ${PROJECT} -l h_rt=96:00:00 -l mem_total=94G -pe omp 5"
+  $runIndelRealigner.clusterOptions = "-P ${PROJECT} -l h_rt=192:00:00 -l mem_total=94G -pe omp 5"
+  $runBaseRecalibrator.clusterOptions = "-P ${PROJECT} -l h_rt=96:00:00 -l mem_total=94G -pe omp 2"
+  $runPrintReads.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=25G"
+  $runBaseRecalibratorPostRecal.clusterOptions = "-P ${PROJECT} -l h_rt=48:00:00 -l mem_total=5g"
+  $runAnalyzeCovariates.clusterOptions = "-P ${PROJECT} -l h_rt=12:00:00 -l mem_total=5G"
+  $runHTC.clusterOptions = "-P ${PROJECT} -l h_rt=96:00:00 -l mem_total=25G"
+  $runFilterVariants.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=10G"
+  $runCombineVariants.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=10G"
+  $runDepthOfCoverage.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=10G"
+  $runCollectMultipleMetrics.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=25G"
+  $runHybridCaptureMetrics.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=10G"
+  $runFastQC.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=5G"
+  $runOxoGMetrics.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=10G"
+  $runMultiQCFastq.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=1G"
+  $runMultiQCLibrary.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=1G"
+  $runMultiQCSample.clusterOptions = "-P ${PROJECT} -l h_rt=24:00:00 -l mem_total=1G"
+  $runRSeQC.clusterOptions = "-P ${PROJECT} -l h_rt=96:00:00 -l mem_total=5G"
+  $runCreateSE.clusterOptions = "-P ${PROJECT} -l h_rt=96:00:00 -l mem_total=10G"
+  //inferAncestry.clusterOptions = "-P ${PROJECT} -l h_rt=96:00:00 -l mem_total=5G"
+}
