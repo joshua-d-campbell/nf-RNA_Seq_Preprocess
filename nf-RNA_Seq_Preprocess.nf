@@ -650,10 +650,13 @@ output:
 
 script:
     outfile_prefix = PREFIX +"_ancestryInference"
-
+    gz_suffix = ".gz"
 """
         module load R/3.2.3
+        module load tabix
         Rscript ${inferAncestry} ${vcfFile} ${outfile_prefix}
+        bgzip ${vcfFile}
+        tabix ${vcfFile}${gz_suffix}
 
 """
 }
